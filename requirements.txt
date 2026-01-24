@@ -1,0 +1,7 @@
+# NSFW Movie Scene Filter Dependencies
+openai>=1.0.0
+scenedetect[opencv]>=0.6.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+tqdm>=4.65.0
+python-dotenv>=1.0.0
