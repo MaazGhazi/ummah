@@ -1,7 +1,16 @@
-# NSFW Movie Scene Filter Dependencies
+# Ethical Movie Filter Dependencies
+
+# Core AI/ML
 openai>=1.0.0
+
+# Video Processing
 scenedetect[opencv]>=0.6.0
 opencv-python>=4.8.0
 Pillow>=10.0.0
+
+# Script-Subtitle Merging
+rapidfuzz>=3.0.0  # Fast fuzzy string matching
+
+# Utilities
 tqdm>=4.65.0
 python-dotenv>=1.0.0
