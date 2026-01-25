@@ -22,57 +22,57 @@ def get_openai_key() -> str:
 
 
 # Vision analysis prompt - Halal content detection for Islamic viewing
-VISION_PROMPT = """Analyze these frames from a movie scene for content that violates Islamic (halal) viewing guidelines.
+VISION_PROMPT = """Analyze these frames from a movie scene for sexual activity, nudity, or intimate behavior that should be flagged for families.
 
-You are helping Muslims identify scenes to skip or replace to make movies family-appropriate according to Islamic principles.
+You are helping identify sexual or nude content that needs reviewing so it can be cut, blurred, or replaced.
 
 ## CONTENT TO DETECT (in order of severity):
 
-**HARAM (Must Skip/Replace):**
-- Any kissing between a man and woman (including brief pecks)
-- Hugging or embracing between non-mahram (unmarried/unrelated) couples
-- Physical touching with romantic/intimate intent
-- Couples lying together or in bed
-- Nudity of any kind (exposed awrah)
-- Revealing clothing: low-cut tops, short skirts, tight clothing emphasizing body
-- Swimwear, lingerie, or underwear scenes
-- Sensual dancing or suggestive movements
-- Seductive poses or behavior
+**SEVERE (must block or remove):**
+- Explicit nudity (full or partial exposure of genitals, buttocks, or bare breasts)
+- Graphic sexual activity (intercourse, simulated sex, oral/anal)
+- Full-body contact with clear sexual intent (couples in bed, sexual positions)
 
-**ALSO FLAG:**
-- Romantic hand-holding or close physical proximity with romantic undertones
-- Women without proper hijab in intimate/romantic contexts
-- Scenes implying intimacy (before/after bedroom scenes)
+**MODERATE (blur, audio-only, or cut):**
+- Kissing or embracing that is prolonged or part of a romantic bedroom-type scene
+- Bodies touching with clear erotic intent (heavy petting, suggestive touching)
+- Revealing clothing that exposes intimate areas (lingerie, swimwear, see-through fabric)
+- Sensual dancing or seductive movement
+
+**MILD (warning-level scrutiny):**
+- Brief kisses or romantic holding without explicit sexual intent
+- Close physical proximity with suggestive body language
+- Suggestive poses or implied intimacy (e.g., undressing but not nude)
 
 ## SCORING (haram_score):
-- 0.0-0.2: Halal - No issues (modest clothing, no physical contact between genders)
-- 0.3-0.4: Questionable - Brief hand-holding, standing close, romantic gazes
-- 0.5-0.6: Mild haram - Kissing, embracing, revealing clothing
-- 0.7-0.8: Moderate haram - Extended kissing, bed scenes (clothed), immodest dress
-- 0.9-1.0: Severe haram - Nudity, sexual content, explicit scenes
+- 0.0-0.2: Clean - No sexual activity or nudity detected
+- 0.3-0.4: Mild - Brief romantic cues, suggestive posture, or partially covered skin
+- 0.5-0.6: Moderate - Overt romantic contact, revealing clothing, implied sensuality
+- 0.7-0.8: Heavy - Prolonged kissing, petting, sensual movement, or revealing bodies
+- 0.9-1.0: Severe - Nudity, explicit sex, or graphic erotic content
 
 ## SCENE DESCRIPTION:
-Describe EXACTLY what is happening: Who is present? What are they doing? What are they wearing? Where are they? Be specific so the user knows exactly what to expect.
+Describe exactly what is happening: who is present, what they are doing, how they are dressed, and anything that signals sexual intent or nudity. Be specific so the requester can preview the risk.
 
 Respond with ONLY a JSON object (no markdown):
 {
     "haram_score": 0.0,
-    "severity": "halal|questionable|mild|moderate|severe",
-    "scene_description": "Detailed description: A man and woman are standing at the bow of a ship. She wears a low-cut dress. He stands behind her with his arms around her waist. They appear to be a romantic couple.",
-    "issues_detected": ["embracing", "romantic_contact", "revealing_clothing"],
+    "severity": "clean|mild|moderate|heavy|severe",
+    "scene_description": "Detailed description of the activity, clothing, and proximity.",
+    "issues_detected": ["kissing", "nudity", "sexual_activity"],
     "replacement_suggestion": "skip|blur_scene|audio_only|cut_segment",
     "confidence": 0.0
 }
 
-ISSUES CATEGORIES: kissing, embracing, hand_holding, romantic_contact, bed_scene, nudity, partial_nudity, revealing_clothing, suggestive_dancing, suggestive_pose, intimate_proximity
+ISSUES CATEGORIES: kissing, embracing, sexual_activity, nudity, partial_nudity, revealing_clothing, suggestive_dancing, intimate_touching, explicit_language, bed_scene
 
 REPLACEMENT SUGGESTIONS:
-- "skip": Completely skip this segment (severe content)
-- "blur_scene": Blur the video but keep audio (moderate content)  
-- "audio_only": Black screen with audio (visual issues only)
-- "cut_segment": Remove entirely including audio (explicit content)
+- "skip": Remove the scene entirely (explicit content)
+- "blur_scene": Keep audio but blur the video (moderate content)
+- "audio_only": Show black or neutral visuals while preserving audio (visual only issues)
+- "cut_segment": Remove both audio and visual (strong explicit content)
 
-Be STRICT - when in doubt, flag it. It's better to flag something questionable than to miss haram content.
+Be precise—if it looks sexual or exposes nudity, flag it. Better to over-report than to miss a risky moment.
 """
 
 
