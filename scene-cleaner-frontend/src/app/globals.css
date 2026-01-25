@@ -1,0 +1,162 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0c0c0f;
+  --foreground: #f0f0f5;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --card: #16161a;
+  --card-border: #2a2a32;
+  --muted: #72727a;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --error: #ef4444;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  min-height: 100vh;
+}
+
+/* Gradient background */
+.gradient-bg {
+  background: 
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.15), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(139, 92, 246, 0.1), transparent),
+    var(--background);
+}
+
+/* Glowing effects */
+.glow {
+  box-shadow: 0 0 40px rgba(99, 102, 241, 0.3);
+}
+
+.glow-sm {
+  box-shadow: 0 0 20px rgba(99, 102, 241, 0.2);
+}
+
+/* Upload zone styling */
+.upload-zone {
+  background: linear-gradient(145deg, rgba(22, 22, 26, 0.8), rgba(22, 22, 26, 0.4));
+  border: 2px dashed var(--card-border);
+  transition: all 0.3s ease;
+}
+
+.upload-zone:hover,
+.upload-zone.drag-over {
+  border-color: var(--accent);
+  background: linear-gradient(145deg, rgba(99, 102, 241, 0.1), rgba(22, 22, 26, 0.6));
+}
+
+/* Toggle switch */
+.toggle-switch {
+  position: relative;
+  width: 48px;
+  height: 26px;
+  background: var(--card-border);
+  border-radius: 13px;
+  transition: background 0.3s ease;
+  cursor: pointer;
+}
+
+.toggle-switch.active {
+  background: var(--accent);
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 0.3s ease;
+}
+
+.toggle-switch.active::after {
+  transform: translateX(22px);
+}
+
+/* Pulse animation */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(99, 102, 241, 0.6);
+  }
+}
+
+.pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Spin animation */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin 3s linear infinite;
+}
+
+/* Progress bar */
+.progress-bar {
+  background: linear-gradient(90deg, var(--accent), #8b5cf6);
+  transition: width 0.5s ease;
+}
+
+/* Floating animation */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+/* Shimmer effect */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--card) 0%,
+    var(--card-border) 50%,
+    var(--card) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
