@@ -17,12 +17,12 @@ from pathlib import Path
 from openai import OpenAI
 from tqdm import tqdm
 
-from src.config import get_openai_key
-from src.scene_detector import detect_scenes
-from src.vision_analyzer import process_scene, refine_scene_timing
-from src.aggregator import merge_adjacent_segments
-from src.utils import format_timestamp
-from src.usage_tracker import log_usage, calculate_cost, print_usage_summary
+from src.core.config import get_openai_key
+from src.core.scene_detector import detect_scenes
+from src.core.vision_analyzer import process_scene, refine_scene_timing
+from src.core.aggregator import merge_adjacent_segments
+from src.core.utils import format_timestamp
+from src.core.usage_tracker import log_usage, calculate_cost, print_usage_summary
 
 
 def parse_args():

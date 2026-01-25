@@ -21,6 +21,17 @@ def get_openai_key() -> str:
     return key
 
 
+def get_fal_key() -> str:
+    """Get fal.ai API key from environment."""
+    key = os.environ.get("FAL_KEY")
+    if not key:
+        raise ValueError(
+            "FAL_KEY not set. "
+            "Either set it as an environment variable or create a .env file."
+        )
+    return key
+
+
 # Vision analysis prompt - Halal content detection for Islamic viewing
 VISION_PROMPT = """Analyze these frames from a movie scene for sexual activity, nudity, or intimate behavior that should be flagged for families.
 
@@ -64,7 +75,7 @@ Respond with ONLY a JSON object (no markdown):
     "confidence": 0.0
 }
 
-ISSUES CATEGORIES: kissing, embracing, sexual_activity, nudity, partial_nudity, revealing_clothing, suggestive_dancing, intimate_touching, explicit_language, bed_scene
+ISSUES CATEGORIES: kissing, embracing, sexual_activity, nudity, partial_nudity, revealing_clothing, swimwear, bikini, shirtless, suggestive_dancing, intimate_touching, explicit_language, bed_scene, lingerie, bathing
 
 REPLACEMENT SUGGESTIONS:
 - "skip": Remove the scene entirely (explicit content)

@@ -1,7 +1,13 @@
-# Ethical Movie Filter Dependencies
+# Movie Scene Replacer Dependencies
 
 # Core AI/ML
 openai>=1.0.0
+fal-client>=0.5.0  # Veo 3.1 video generation
+
+# Web Framework
+flask>=3.0.0
+flask-cors>=4.0.0
+werkzeug>=3.0.0
 
 # Video Processing
 scenedetect[opencv]>=0.6.0
@@ -14,3 +20,4 @@ rapidfuzz>=3.0.0  # Fast fuzzy string matching
 # Utilities
 tqdm>=4.65.0
 python-dotenv>=1.0.0
+requests>=2.28.0  # For downloading generated videos
