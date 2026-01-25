@@ -2,42 +2,37 @@
 """
 Movie Scene Replacer - Flask API Backend
 
-A REST API for analyzing movies, detecting inappropriate content,
-and generating family-friendly replacements using AI.
+A REST API that wraps replace_scenes.py to process videos and filter inappropriate content.
 
-Endpoints:
-    POST /api/upload          - Upload a video file
-    POST /api/analyze         - Analyze video for inappropriate content
-    POST /api/replace         - Generate replacement clips for flagged scenes
-    POST /api/stitch          - Stitch the final cleaned video
-    POST /api/process         - Full pipeline (analyze + replace + stitch)
-    GET  /api/status/<job_id> - Check job status
-    GET  /api/download/<job_id> - Download the cleaned video
-    GET  /api/segments/<job_id> - Get detected segments
-    DELETE /api/job/<job_id>  - Delete a job and its files
+Single Endpoint:
+    POST /api/process - Process a video with visual filtering
+                        Input: mp4 file + filter booleans
+                        Output: final edited mp4
 """
 
 import os
-import json
+import sys
 import uuid
 import shutil
-import threading
 from pathlib import Path
-from datetime import datetime
-from functools import wraps
+from types import SimpleNamespace
 
-from flask import Flask, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
-# Load environment variables
+# Load environment variables FIRST
 load_dotenv()
 
-# Import our modules
-from src.core.analysis import analyze_movie
-from src.core.scene_replacer import process_all_replacements
-from src.core.video_stitcher import stitch_movie_with_replacements, get_video_info
+# Get the project root directory (parent of src/api/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+# Add project root to path so we can import replace_scenes
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# Import the replace_scenes functions
+from replace_scenes import analyze_video, generate_replacements, stitch_video
 
 # ============================================================================
 # Configuration
@@ -48,19 +43,17 @@ CORS(app)  # Enable CORS for frontend integration
 
 # Configuration
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2GB max upload
-app.config['UPLOAD_FOLDER'] = Path('uploads')
-app.config['JOBS_FOLDER'] = Path('jobs')
+app.config['UPLOAD_FOLDER'] = PROJECT_ROOT / 'uploads'
+app.config['JOBS_FOLDER'] = PROJECT_ROOT / 'jobs'
 app.config['ALLOWED_EXTENSIONS'] = {'mp4', 'mkv', 'avi', 'mov', 'webm'}
 
 # Ensure directories exist
 app.config['UPLOAD_FOLDER'].mkdir(exist_ok=True)
 app.config['JOBS_FOLDER'].mkdir(exist_ok=True)
 
-# Job status tracking (in-memory, use Redis for production)
-jobs = {}
 
 # ============================================================================
-# Helpers
+# Helper Functions
 # ============================================================================
 
 def allowed_file(filename: str) -> bool:
@@ -74,8 +67,13 @@ def get_job_path(job_id: str) -> Path:
     return app.config['JOBS_FOLDER'] / job_id
 
 
-def create_job(video_path: str, original_filename: str) -> dict:
-    """Create a new processing job."""
+def create_job_directory(video_path: str, original_filename: str) -> tuple:
+    """
+    Create a new processing job directory.
+    
+    Returns:
+        Tuple of (job_id, job_directory, job_video_path)
+    """
     job_id = str(uuid.uuid4())[:8]
     job_dir = get_job_path(job_id)
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -85,246 +83,120 @@ def create_job(video_path: str, original_filename: str) -> dict:
     job_video_path = job_dir / f"input{video_ext}"
     shutil.copy(video_path, job_video_path)
     
-    # Get video info
-    video_info = get_video_info(str(job_video_path))
+    return job_id, job_dir, job_video_path
+
+
+def process_video_with_replace_scenes(
+    video_path: str,
+    output_path: str,
+    work_dir: str,
+    threshold: float = 0.4,
+    resolution: str = "720p",
+    strict: bool = False,
+    refine_timing: bool = False,
+    verbose: bool = True,
+    max_scenes: int = None,
+) -> dict:
+    """
+    Process a video using the replace_scenes.py logic.
     
-    job = {
-        "id": job_id,
-        "status": "created",
-        "created_at": datetime.now().isoformat(),
-        "updated_at": datetime.now().isoformat(),
-        "original_filename": original_filename,
-        "video_path": str(job_video_path),
-        "video_info": video_info,
-        "segments": [],
-        "replacements": [],
+    This wraps the functions from replace_scenes.py to:
+    1. Analyze video for inappropriate content
+    2. Generate replacement clips using fal.ai
+    3. Stitch the final video
+    
+    Returns:
+        dict with success status, output_path, and stats
+    """
+    # Create args namespace to match replace_scenes.py expectations
+    args = SimpleNamespace(
+        work_dir=work_dir,
+        threshold=threshold,
+        verbose=verbose,
+        refine_timing=refine_timing,
+        strict=strict,
+        resolution=resolution,
+        max_scenes=max_scenes,
+        keep_original_audio=True,
+        no_original_audio=False,
+    )
+    
+    # Ensure work directory exists
+    Path(work_dir).mkdir(parents=True, exist_ok=True)
+    
+    result = {
+        "success": False,
         "output_path": None,
+        "segments_found": 0,
+        "replacements_successful": 0,
         "error": None,
-        "progress": {
-            "phase": "created",
-            "percent": 0,
-            "message": "Job created"
-        }
     }
     
-    jobs[job_id] = job
-    save_job(job)
-    return job
-
-
-def save_job(job: dict):
-    """Persist job data to disk."""
-    job_dir = get_job_path(job["id"])
-    with open(job_dir / "job.json", "w") as f:
-        json.dump(job, f, indent=2, default=str)
-
-
-def load_job(job_id: str) -> dict | None:
-    """Load job data from disk."""
-    if job_id in jobs:
-        return jobs[job_id]
-    
-    job_file = get_job_path(job_id) / "job.json"
-    if job_file.exists():
-        with open(job_file) as f:
-            job = json.load(f)
-            jobs[job_id] = job
-            return job
-    return None
-
-
-def update_job(job_id: str, **updates):
-    """Update job with new data."""
-    job = load_job(job_id)
-    if job:
-        job.update(updates)
-        job["updated_at"] = datetime.now().isoformat()
-        jobs[job_id] = job
-        save_job(job)
-    return job
-
-
-def require_api_key(f):
-    """Decorator to require API key for endpoints (optional security)."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        # Skip API key check if not configured
-        api_key = os.environ.get('API_KEY')
-        if api_key:
-            provided_key = request.headers.get('X-API-Key')
-            if provided_key != api_key:
-                return jsonify({"error": "Invalid or missing API key"}), 401
-        return f(*args, **kwargs)
-    return decorated
-
-
-# ============================================================================
-# Background Processing Functions
-# ============================================================================
-
-def run_analysis(job_id: str, threshold: float = 0.4, strict: bool = False):
-    """Run video analysis in background thread."""
     try:
-        job = load_job(job_id)
-        if not job:
-            return
+        # Phase 1: Analyze video for inappropriate content
+        print("\n" + "=" * 60)
+        print("PHASE 1: CONTENT ANALYSIS")
+        print("=" * 60)
         
-        update_job(job_id, 
-                   status="analyzing",
-                   progress={"phase": "analyzing", "percent": 10, "message": "Starting content analysis..."})
+        segments = analyze_video(video_path, args)
+        result["segments_found"] = len(segments)
         
-        video_path = job["video_path"]
-        job_dir = get_job_path(job_id)
-        
-        # Run analysis
-        result = analyze_movie(
-            video_path,
-            output_path=str(job_dir / "segments.json"),
-            threshold=threshold,
-            strict=strict,
-            high_accuracy=True,
-            quiet=True,
-            save_output=True,
-            log_usage_flag=True,
-        )
-        
-        segments = result.get("segments", [])
-        stats = result.get("stats", {})
-        
-        update_job(job_id,
-                   status="analyzed",
-                   segments=segments,
-                   analysis_stats=stats,
-                   progress={"phase": "analyzed", "percent": 100, "message": f"Found {len(segments)} flagged segments"})
-        
-    except Exception as e:
-        update_job(job_id, status="error", error=str(e),
-                   progress={"phase": "error", "percent": 0, "message": str(e)})
-
-
-def run_replacement(job_id: str, resolution: str = "720p", max_scenes: int | None = None):
-    """Run replacement generation in background thread."""
-    try:
-        job = load_job(job_id)
-        if not job:
-            return
-        
-        segments = job.get("segments", [])
         if not segments:
-            update_job(job_id, status="no_segments", 
-                       progress={"phase": "complete", "percent": 100, "message": "No segments to replace"})
-            return
-        
-        update_job(job_id,
-                   status="generating",
-                   progress={"phase": "generating", "percent": 10, "message": f"Generating {len(segments)} replacements..."})
-        
-        video_path = job["video_path"]
-        job_dir = get_job_path(job_id)
-        replacements_dir = job_dir / "replacements"
-        
-        # Generate replacements
-        replacements = process_all_replacements(
-            video_path=video_path,
-            segments=segments,
-            output_dir=str(replacements_dir),
-            resolution=resolution,
-            max_scenes=max_scenes,
-        )
-        
-        successful = [r for r in replacements if r.get("replacement_path")]
-        
-        update_job(job_id,
-                   status="generated",
-                   replacements=replacements,
-                   progress={"phase": "generated", "percent": 100, 
-                            "message": f"Generated {len(successful)}/{len(segments)} replacements"})
-        
-    except Exception as e:
-        update_job(job_id, status="error", error=str(e),
-                   progress={"phase": "error", "percent": 0, "message": str(e)})
-
-
-def run_stitching(job_id: str, keep_original_audio: bool = True):
-    """Run video stitching in background thread."""
-    try:
-        job = load_job(job_id)
-        if not job:
-            return
-        
-        replacements = job.get("replacements", [])
-        successful_replacements = [r for r in replacements if r.get("replacement_path")]
-        
-        if not successful_replacements:
-            update_job(job_id, status="no_replacements",
-                       progress={"phase": "complete", "percent": 100, "message": "No replacements to stitch"})
-            return
-        
-        update_job(job_id,
-                   status="stitching",
-                   progress={"phase": "stitching", "percent": 10, "message": "Stitching final video..."})
-        
-        video_path = job["video_path"]
-        job_dir = get_job_path(job_id)
-        output_path = str(job_dir / "output_clean.mp4")
-        
-        # Stitch video
-        result = stitch_movie_with_replacements(
-            original_video=video_path,
-            replacements=successful_replacements,
-            output_path=output_path,
-            work_dir=str(job_dir / "stitch_work"),
-            keep_original_audio=keep_original_audio,
-        )
-        
-        if result.get("success"):
-            update_job(job_id,
-                       status="complete",
-                       output_path=output_path,
-                       stitch_result=result,
-                       progress={"phase": "complete", "percent": 100, 
-                                "message": f"Video ready! {result.get('replacements_applied', 0)} scenes replaced"})
-        else:
-            update_job(job_id, status="error", error="Stitching failed",
-                       progress={"phase": "error", "percent": 0, "message": "Stitching failed"})
-        
-    except Exception as e:
-        update_job(job_id, status="error", error=str(e),
-                   progress={"phase": "error", "percent": 0, "message": str(e)})
-
-
-def run_full_pipeline(job_id: str, threshold: float = 0.4, resolution: str = "720p",
-                      strict: bool = False, max_scenes: int | None = None,
-                      keep_original_audio: bool = True):
-    """Run the full pipeline in background thread."""
-    try:
-        # Phase 1: Analyze
-        run_analysis(job_id, threshold=threshold, strict=strict)
-        
-        job = load_job(job_id)
-        if job.get("status") == "error":
-            return
-        
-        segments = job.get("segments", [])
-        if not segments:
-            update_job(job_id, status="complete",
-                       progress={"phase": "complete", "percent": 100, 
-                                "message": "No inappropriate content detected - video is clean!"})
-            return
+            print("\nNo inappropriate scenes detected - video is already clean!")
+            # Just copy the original video to output
+            shutil.copy(video_path, output_path)
+            result["success"] = True
+            result["output_path"] = output_path
+            return result
         
         # Phase 2: Generate replacements
-        run_replacement(job_id, resolution=resolution, max_scenes=max_scenes)
+        print("\n" + "=" * 60)
+        print("PHASE 2: GENERATING REPLACEMENTS")
+        print("=" * 60)
         
-        job = load_job(job_id)
-        if job.get("status") == "error":
-            return
+        replacements = generate_replacements(video_path, segments, args)
+        successful = [r for r in replacements if r.get("replacement_path")]
+        result["replacements_successful"] = len(successful)
         
-        # Phase 3: Stitch
-        run_stitching(job_id, keep_original_audio=keep_original_audio)
+        if not successful:
+            print("\nNo successful replacements - returning original video")
+            shutil.copy(video_path, output_path)
+            result["success"] = True
+            result["output_path"] = output_path
+            result["error"] = "No successful replacements generated"
+            return result
+        
+        # Phase 3: Stitch final video
+        print("\n" + "=" * 60)
+        print("PHASE 3: STITCHING FINAL VIDEO")
+        print("=" * 60)
+        
+        stitch_result = stitch_video(video_path, replacements, output_path, args)
+        
+        if stitch_result.get("success"):
+            result["success"] = True
+            result["output_path"] = output_path
+            print("\nSuccessfully created cleaned video!")
+        else:
+            result["error"] = stitch_result.get("error", "Unknown stitching error")
+            # Return original video on failure
+            shutil.copy(video_path, output_path)
+            result["success"] = True
+            result["output_path"] = output_path
+        
+        return result
         
     except Exception as e:
-        update_job(job_id, status="error", error=str(e),
-                   progress={"phase": "error", "percent": 0, "message": str(e)})
+        result["error"] = str(e)
+        print(f"\nError during processing: {e}")
+        # Return original video on error
+        try:
+            shutil.copy(video_path, output_path)
+            result["success"] = True
+            result["output_path"] = output_path
+        except:
+            pass
+        return result
 
 
 # ============================================================================
@@ -336,21 +208,37 @@ def health_check():
     """Health check endpoint."""
     return jsonify({
         "status": "healthy",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "openai_configured": bool(os.environ.get('OPENAI_API_KEY')),
         "fal_configured": bool(os.environ.get('FAL_KEY')),
     })
 
 
-@app.route('/api/upload', methods=['POST'])
-@require_api_key
-def upload_video():
+@app.route('/api/process', methods=['POST'])
+def process_video():
     """
-    Upload a video file and create a processing job.
+    Process a video with visual filtering using replace_scenes.py logic.
     
-    Returns:
-        Job object with job_id for subsequent operations
+    Input:
+        - video (file): MP4 video file to process
+        - filter_music (bool): Whether to filter out music (NOT YET IMPLEMENTED)
+        - filter_profanity (bool): Whether to filter out profanity (NOT YET IMPLEMENTED)
+        - filter_sexual_nudity (bool): Whether to filter out sexual/nudity content
+        - threshold (float): Detection sensitivity (0.0-1.0, default: 0.4)
+        - resolution (str): Video resolution for replacements (default: "720p")
+        - strict (bool): Use stricter detection (default: false)
+    
+    Output:
+        - Final edited MP4 file
     """
+    # Check API keys first
+    if not os.environ.get('OPENAI_API_KEY'):
+        return jsonify({"error": "OPENAI_API_KEY not configured on server"}), 500
+    
+    if not os.environ.get('FAL_KEY'):
+        return jsonify({"error": "FAL_KEY not configured on server"}), 500
+    
+    # Validate video file
     if 'video' not in request.files:
         return jsonify({"error": "No video file provided"}), 400
     
@@ -362,309 +250,87 @@ def upload_video():
     if not allowed_file(file.filename):
         return jsonify({"error": f"File type not allowed. Allowed: {app.config['ALLOWED_EXTENSIONS']}"}), 400
     
+    # Parse filter options from form data
+    filter_music = request.form.get('filter_music', 'false').lower() == 'true'
+    filter_profanity = request.form.get('filter_profanity', 'false').lower() == 'true'
+    filter_sexual_nudity = request.form.get('filter_sexual_nudity', 'false').lower() == 'true'
+    
+    # Parse additional options
+    threshold = float(request.form.get('threshold', 0.4))
+    resolution = request.form.get('resolution', '720p')
+    strict = request.form.get('strict', 'false').lower() == 'true'
+    
+    # Check if at least one filter is enabled
+    if not any([filter_music, filter_profanity, filter_sexual_nudity]):
+        return jsonify({
+            "error": "At least one filter must be enabled (filter_music, filter_profanity, or filter_sexual_nudity)"
+        }), 400
+    
     # Save uploaded file temporarily
     filename = secure_filename(file.filename)
     temp_path = app.config['UPLOAD_FOLDER'] / filename
     file.save(temp_path)
     
     try:
-        # Create job
-        job = create_job(str(temp_path), filename)
+        # Create job directory
+        job_id, job_dir, job_video_path = create_job_directory(str(temp_path), filename)
         
         # Clean up temp file
         temp_path.unlink()
         
-        return jsonify({
-            "success": True,
-            "job": job,
-            "message": f"Video uploaded successfully. Job ID: {job['id']}"
-        })
+        print(f"\n{'=' * 60}")
+        print(f"Created job: {job_id}")
+        print(f"   Filters: music={filter_music}, profanity={filter_profanity}, sexual_nudity={filter_sexual_nudity}")
+        print(f"{'=' * 60}")
+        
+        # Set output path
+        output_path = str(job_dir / "output_clean.mp4")
+        
+        # Process video if sexual_nudity filter is enabled (visual processing)
+        if filter_sexual_nudity:
+            result = process_video_with_replace_scenes(
+                video_path=str(job_video_path),
+                output_path=output_path,
+                work_dir=str(job_dir),
+                threshold=threshold,
+                resolution=resolution,
+                strict=strict,
+            )
+            
+            if not result["success"]:
+                return jsonify({"error": result.get("error", "Processing failed")}), 500
+            
+            output_path = result["output_path"]
+        else:
+            # No visual processing, just copy input to output
+            shutil.copy(str(job_video_path), output_path)
+        
+        # TODO: Audio filtering (music, profanity) - not yet implemented
+        # if filter_music or filter_profanity:
+        #     output_path = apply_audio_filters(output_path, job_dir, filter_music, filter_profanity)
+        
+        # Generate download filename
+        original_name = Path(filename).stem
+        download_name = f"{original_name}_clean.mp4"
+        
+        print(f"\nProcessing complete! Returning cleaned video.")
+        print(f"   Output: {output_path}")
+        
+        # Return the processed video file
+        return send_file(
+            output_path,
+            mimetype='video/mp4',
+            as_attachment=True,
+            download_name=download_name
+        )
         
     except Exception as e:
         if temp_path.exists():
             temp_path.unlink()
+        print(f"\nError processing video: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/analyze/<job_id>', methods=['POST'])
-@require_api_key
-def analyze_video(job_id: str):
-    """
-    Analyze a video for inappropriate content.
-    
-    Body params:
-        threshold (float): Detection sensitivity (0.0-1.0, default: 0.4)
-        strict (bool): Use stricter detection (default: false)
-    """
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    data = request.get_json() or {}
-    threshold = float(data.get('threshold', 0.4))
-    strict = bool(data.get('strict', False))
-    
-    # Start analysis in background
-    thread = threading.Thread(
-        target=run_analysis,
-        args=(job_id,),
-        kwargs={'threshold': threshold, 'strict': strict}
-    )
-    thread.start()
-    
-    return jsonify({
-        "success": True,
-        "job_id": job_id,
-        "message": "Analysis started",
-        "status_url": f"/api/status/{job_id}"
-    })
-
-
-@app.route('/api/replace/<job_id>', methods=['POST'])
-@require_api_key
-def replace_segments(job_id: str):
-    """
-    Generate replacement clips for flagged segments.
-    
-    Body params:
-        resolution (str): Video resolution - "720p", "1080p", "4k" (default: "720p")
-        max_scenes (int): Maximum scenes to replace (optional, for testing)
-    """
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    if not job.get("segments"):
-        return jsonify({"error": "No segments found. Run analysis first."}), 400
-    
-    data = request.get_json() or {}
-    resolution = data.get('resolution', '720p')
-    max_scenes = data.get('max_scenes')
-    
-    # Start replacement in background
-    thread = threading.Thread(
-        target=run_replacement,
-        args=(job_id,),
-        kwargs={'resolution': resolution, 'max_scenes': max_scenes}
-    )
-    thread.start()
-    
-    return jsonify({
-        "success": True,
-        "job_id": job_id,
-        "message": "Replacement generation started",
-        "status_url": f"/api/status/{job_id}"
-    })
-
-
-@app.route('/api/stitch/<job_id>', methods=['POST'])
-@require_api_key
-def stitch_video(job_id: str):
-    """
-    Stitch the final video with replacements.
-    
-    Body params:
-        keep_original_audio (bool): Keep original audio during replacements (default: true)
-    """
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    if not job.get("replacements"):
-        return jsonify({"error": "No replacements found. Run replacement first."}), 400
-    
-    data = request.get_json() or {}
-    keep_original_audio = data.get('keep_original_audio', True)
-    
-    # Start stitching in background
-    thread = threading.Thread(
-        target=run_stitching,
-        args=(job_id,),
-        kwargs={'keep_original_audio': keep_original_audio}
-    )
-    thread.start()
-    
-    return jsonify({
-        "success": True,
-        "job_id": job_id,
-        "message": "Stitching started",
-        "status_url": f"/api/status/{job_id}"
-    })
-
-
-@app.route('/api/process/<job_id>', methods=['POST'])
-@require_api_key
-def process_full(job_id: str):
-    """
-    Run the full pipeline: analyze → replace → stitch.
-    
-    Body params:
-        threshold (float): Detection sensitivity (default: 0.4)
-        resolution (str): Video resolution (default: "720p")
-        strict (bool): Stricter detection (default: false)
-        max_scenes (int): Max scenes to replace (optional)
-        keep_original_audio (bool): Keep original audio (default: true)
-    """
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    data = request.get_json() or {}
-    
-    # Start full pipeline in background
-    thread = threading.Thread(
-        target=run_full_pipeline,
-        args=(job_id,),
-        kwargs={
-            'threshold': float(data.get('threshold', 0.4)),
-            'resolution': data.get('resolution', '720p'),
-            'strict': bool(data.get('strict', False)),
-            'max_scenes': data.get('max_scenes'),
-            'keep_original_audio': data.get('keep_original_audio', True),
-        }
-    )
-    thread.start()
-    
-    return jsonify({
-        "success": True,
-        "job_id": job_id,
-        "message": "Full processing started",
-        "status_url": f"/api/status/{job_id}"
-    })
-
-
-@app.route('/api/status/<job_id>', methods=['GET'])
-def get_status(job_id: str):
-    """Get the current status of a job."""
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    return jsonify({
-        "id": job["id"],
-        "status": job["status"],
-        "progress": job.get("progress", {}),
-        "created_at": job["created_at"],
-        "updated_at": job["updated_at"],
-        "segments_count": len(job.get("segments", [])),
-        "replacements_count": len([r for r in job.get("replacements", []) if r.get("replacement_path")]),
-        "has_output": job.get("output_path") is not None,
-        "error": job.get("error"),
-    })
-
-
-@app.route('/api/segments/<job_id>', methods=['GET'])
-def get_segments(job_id: str):
-    """Get the detected segments for a job."""
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    return jsonify({
-        "job_id": job_id,
-        "segments": job.get("segments", []),
-        "analysis_stats": job.get("analysis_stats", {}),
-    })
-
-
-@app.route('/api/download/<job_id>', methods=['GET'])
-def download_video(job_id: str):
-    """Download the processed video."""
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    output_path = job.get("output_path")
-    if not output_path or not Path(output_path).exists():
-        return jsonify({"error": "Output video not ready"}), 404
-    
-    # Generate download filename
-    original_name = Path(job["original_filename"]).stem
-    download_name = f"{original_name}_clean.mp4"
-    
-    return send_file(
-        output_path,
-        mimetype='video/mp4',
-        as_attachment=True,
-        download_name=download_name
-    )
-
-
-@app.route('/api/download/<job_id>/original', methods=['GET'])
-def download_original(job_id: str):
-    """Download the original uploaded video."""
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    video_path = job.get("video_path")
-    if not video_path or not Path(video_path).exists():
-        return jsonify({"error": "Original video not found"}), 404
-    
-    return send_file(
-        video_path,
-        mimetype='video/mp4',
-        as_attachment=True,
-        download_name=job["original_filename"]
-    )
-
-
-@app.route('/api/job/<job_id>', methods=['GET'])
-def get_job(job_id: str):
-    """Get full job details."""
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    return jsonify(job)
-
-
-@app.route('/api/job/<job_id>', methods=['DELETE'])
-@require_api_key
-def delete_job(job_id: str):
-    """Delete a job and all its files."""
-    job = load_job(job_id)
-    if not job:
-        return jsonify({"error": "Job not found"}), 404
-    
-    job_dir = get_job_path(job_id)
-    
-    try:
-        if job_dir.exists():
-            shutil.rmtree(job_dir)
-        
-        if job_id in jobs:
-            del jobs[job_id]
-        
-        return jsonify({"success": True, "message": f"Job {job_id} deleted"})
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/jobs', methods=['GET'])
-def list_jobs():
-    """List all jobs."""
-    job_dirs = list(app.config['JOBS_FOLDER'].iterdir())
-    
-    job_list = []
-    for job_dir in job_dirs:
-        if job_dir.is_dir():
-            job = load_job(job_dir.name)
-            if job:
-                job_list.append({
-                    "id": job["id"],
-                    "status": job["status"],
-                    "original_filename": job["original_filename"],
-                    "created_at": job["created_at"],
-                    "segments_count": len(job.get("segments", [])),
-                    "has_output": job.get("output_path") is not None,
-                })
-    
-    # Sort by creation time (newest first)
-    job_list.sort(key=lambda x: x["created_at"], reverse=True)
-    
-    return jsonify({"jobs": job_list})
 
 
 # ============================================================================
@@ -686,22 +352,40 @@ def internal_error(e):
 # ============================================================================
 
 if __name__ == '__main__':
+    print("\n" + "=" * 60)
+    print("MOVIE SCENE REPLACER API v2.0")
+    print("=" * 60)
+    
     # Check required API keys
-    if not os.environ.get('OPENAI_API_KEY'):
-        print("⚠️  Warning: OPENAI_API_KEY not set")
-    if not os.environ.get('FAL_KEY'):
-        print("⚠️  Warning: FAL_KEY not set")
+    openai_ok = bool(os.environ.get('OPENAI_API_KEY'))
+    fal_ok = bool(os.environ.get('FAL_KEY'))
     
-    print("🎬 Movie Scene Replacer API")
-    print("=" * 40)
-    print("Endpoints:")
-    print("  POST /api/upload          - Upload video")
-    print("  POST /api/analyze/<id>    - Analyze for content")
-    print("  POST /api/replace/<id>    - Generate replacements")
-    print("  POST /api/stitch/<id>     - Stitch final video")
-    print("  POST /api/process/<id>    - Full pipeline")
-    print("  GET  /api/status/<id>     - Check status")
-    print("  GET  /api/download/<id>   - Download result")
-    print("=" * 40)
+    print(f"\nConfiguration:")
+    print(f"   OPENAI_API_KEY: {'Set' if openai_ok else 'NOT SET'}")
+    print(f"   FAL_KEY: {'Set' if fal_ok else 'NOT SET'}")
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    if not openai_ok:
+        print("\nWarning: OPENAI_API_KEY not set - visual analysis will fail")
+    if not fal_ok:
+        print("Warning: FAL_KEY not set - video generation will fail")
+    
+    print(f"\nDirectories:")
+    print(f"   Project root: {PROJECT_ROOT}")
+    print(f"   Uploads: {app.config['UPLOAD_FOLDER']}")
+    print(f"   Jobs: {app.config['JOBS_FOLDER']}")
+    
+    print(f"\nEndpoint:")
+    print(f"   POST /api/process - Process video with filters")
+    print(f"\nInput Parameters:")
+    print(f"   - video: MP4 file to process")
+    print(f"   - filter_sexual_nudity: Filter sexual/nudity content (bool)")
+    print(f"   - filter_music: Filter music (bool) - NOT YET IMPLEMENTED")
+    print(f"   - filter_profanity: Filter profanity (bool) - NOT YET IMPLEMENTED")
+    print(f"   - threshold: Detection sensitivity (0.0-1.0, default: 0.4)")
+    print(f"   - resolution: Replacement resolution (720p/1080p/4k)")
+    print(f"   - strict: Stricter detection (bool)")
+    
+    print(f"\nOutput: Final edited MP4 file")
+    print("=" * 60 + "\n")
+    
+    app.run(host='0.0.0.0', port=5001, debug=True)

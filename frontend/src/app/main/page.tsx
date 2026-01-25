@@ -1,10 +1,11 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import FileInput from "@/components/FileInput";
-import FilterContainer from "@/components/FilterContainer";
+import FilterContainer, { Filter, defaultFilters } from "@/components/FilterContainer";
 import GenerateButton from "@/components/GenerateButton";
 import ProcessLoading from "@/components/ProcessLoading";
 import VideoPlayer from "@/components/VideoPlayer";
+import { processVideo, FilterOptions } from "@/services/api";
 
 type Step = "input" | "processing" | "complete";
 type TransitionState = "visible" | "fading-out" | "fading-in" | "hidden";
@@ -14,6 +15,11 @@ export default function MainPage() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [pageVisible, setPageVisible] = useState(false);
+  const [filters, setFilters] = useState<Filter[]>(defaultFilters);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Ref to track if processing is complete (for transition timing)
+  const processingCompleteRef = useRef(false);
   
   // Transition states for each section
   const [inputTransition, setInputTransition] = useState<TransitionState>("hidden");
@@ -32,15 +38,53 @@ export default function MainPage() {
 
   const handleFileSelect = (file: File) => {
     setSelectedFile(file);
+    setError(null);
   };
 
-  const handleGenerate = () => {
+  const handleFiltersChange = (newFilters: Filter[]) => {
+    setFilters(newFilters);
+  };
+
+  const transitionToComplete = (url: string) => {
+    // Fade out processing section
+    setProcessingTransition("fading-out");
+    
+    setTimeout(() => {
+      setProcessingTransition("hidden");
+      setVideoUrl(url);
+      setCurrentStep("complete");
+      
+      // Fade in complete section
+      setCompleteTransition("fading-in");
+      setTimeout(() => setCompleteTransition("visible"), 50);
+    }, 700);
+  };
+
+  const transitionToError = (errorMessage: string) => {
+    // Fade out processing section
+    setProcessingTransition("fading-out");
+    
+    setTimeout(() => {
+      setProcessingTransition("hidden");
+      setCurrentStep("input");
+      setError(errorMessage);
+      
+      // Fade in input section
+      setInputTransition("fading-in");
+      setTimeout(() => setInputTransition("visible"), 50);
+    }, 700);
+  };
+
+  const handleGenerate = async () => {
     if (!selectedFile) return;
+    
+    setError(null);
+    processingCompleteRef.current = false;
     
     // Fade out input section
     setInputTransition("fading-out");
     
-    setTimeout(() => {
+    setTimeout(async () => {
       setInputTransition("hidden");
       setCurrentStep("processing");
       
@@ -48,24 +92,30 @@ export default function MainPage() {
       setProcessingTransition("fading-in");
       setTimeout(() => setProcessingTransition("visible"), 50);
       
-      // Simulate processing (will be replaced with actual backend call)
-      setTimeout(() => {
-        // Fade out processing section
-        setProcessingTransition("fading-out");
+      // Convert filters to API format
+      const filterOptions: FilterOptions = {
+        music: filters.find(f => f.id === "music")?.enabled ?? false,
+        profanity: filters.find(f => f.id === "profanity")?.enabled ?? false,
+        nudity: filters.find(f => f.id === "nudity")?.enabled ?? false,
+      };
+
+      try {
+        // Call the backend API
+        const result = await processVideo(selectedFile, filterOptions);
         
-        setTimeout(() => {
-          setProcessingTransition("hidden");
-          
-          // Create video URL and move to complete step
-          const url = URL.createObjectURL(selectedFile);
-          setVideoUrl(url);
-          setCurrentStep("complete");
-          
-          // Fade in complete section
-          setCompleteTransition("fading-in");
-          setTimeout(() => setCompleteTransition("visible"), 50);
-        }, 700);
-      }, 5000); // 5 second processing delay for testing
+        if (result.success && result.videoBlob) {
+          // Create URL from the returned video blob
+          const url = URL.createObjectURL(result.videoBlob);
+          processingCompleteRef.current = true;
+          transitionToComplete(url);
+        } else {
+          // Handle error
+          transitionToError(result.error || "Failed to process video");
+        }
+      } catch (err) {
+        console.error("Processing error:", err);
+        transitionToError("An unexpected error occurred while processing the video");
+      }
     }, 700);
   };
 
@@ -77,6 +127,7 @@ export default function MainPage() {
       setCompleteTransition("hidden");
       setCurrentStep("input");
       setSelectedFile(null);
+      setError(null);
       
       if (videoUrl) {
         URL.revokeObjectURL(videoUrl);
@@ -119,8 +170,15 @@ export default function MainPage() {
               <p className="text-gray-400">Upload a video and select your filters</p>
             </div>
             
+            {/* Error message */}
+            {error && (
+              <div className="bg-red-500/20 border border-red-500 text-red-400 px-4 py-3 rounded-lg text-center">
+                {error}
+              </div>
+            )}
+            
             <FileInput onFileSelect={handleFileSelect} selectedFile={selectedFile} />
-            <FilterContainer />
+            <FilterContainer filters={filters} onFiltersChange={handleFiltersChange} />
             <GenerateButton 
               onClick={handleGenerate} 
               disabled={!selectedFile} 

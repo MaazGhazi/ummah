@@ -1,37 +1,22 @@
 "use client";
-import { useState } from "react";
 
-interface Filter {
+export interface Filter {
   id: string;
   name: string;
   enabled: boolean;
 }
 
-export default function FilterContainer() {
-  const [filters, setFilters] = useState<Filter[]>([
-    {
-      id: "music",
-      name: "Music",
-      enabled: true,
-    },
-    {
-      id: "profanity",
-      name: "Profanity",
-      enabled: false,
-    },
-    {
-      id: "nudity",
-      name: "Nudity/Sexual",
-      enabled: false,
-    },
-  ]);
+export interface FilterContainerProps {
+  filters: Filter[];
+  onFiltersChange: (filters: Filter[]) => void;
+}
 
+export default function FilterContainer({ filters, onFiltersChange }: FilterContainerProps) {
   const toggleFilter = (id: string) => {
-    setFilters((prev) =>
-      prev.map((filter) =>
-        filter.id === id ? { ...filter, enabled: !filter.enabled } : filter
-      )
+    const updatedFilters = filters.map((filter) =>
+      filter.id === id ? { ...filter, enabled: !filter.enabled } : filter
     );
+    onFiltersChange(updatedFilters);
   };
 
   return (
@@ -55,3 +40,22 @@ export default function FilterContainer() {
     </div>
   );
 }
+
+// Default filters for initialization
+export const defaultFilters: Filter[] = [
+  {
+    id: "music",
+    name: "Music",
+    enabled: true,
+  },
+  {
+    id: "profanity",
+    name: "Profanity",
+    enabled: false,
+  },
+  {
+    id: "nudity",
+    name: "Nudity/Sexual",
+    enabled: false,
+  },
+];
