@@ -362,44 +362,40 @@ def replace_scene(
     # Calculate the original scene duration
     original_duration = end_time - start_time
     
-    # Calculate ideal replacement window (scene + buffers)
-    ideal_start = max(0, start_time - buffer_seconds)
-    ideal_end = end_time + buffer_seconds
-    ideal_duration = ideal_end - ideal_start
+    # Calculate the FULL replacement window (entire flagged scene + buffers)
+    # This is what gets CUT from the original video
+    cut_start = max(0, start_time - buffer_seconds)
+    cut_end = end_time + buffer_seconds
+    cut_duration = cut_end - cut_start
     
-    # If the scene is too long for Veo, cut it to fit within max_veo_duration
-    # We prioritize keeping the START of the scene (where the issue begins)
-    if ideal_duration > max_veo_duration:
-        # Calculate how much we need to trim
-        excess = ideal_duration - max_veo_duration
-        
-        # Reduce the end buffer first, then cut into the scene if needed
-        # This ensures we capture the START of the intimate scene
-        new_end = ideal_end - excess
-        
-        # Make sure we still cover at least the start of the flagged content
-        # with a small buffer after
-        min_end = start_time + 1.0  # At least 1 second into the flagged scene
-        new_end = max(new_end, min_end)
-        
-        replace_start = ideal_start
-        replace_end = new_end
+    # For Veo, we can only generate up to max_veo_duration
+    # But we still CUT OUT the entire flagged segment!
+    # The replacement will be shorter, making the final video shorter but CLEAN
+    if cut_duration > max_veo_duration:
+        # Generate max duration replacement, but cut the ENTIRE scene
+        veo_generation_duration = max_veo_duration
         was_trimmed = True
-        trimmed_seconds = excess
+        trimmed_seconds = cut_duration - max_veo_duration
     else:
-        replace_start = ideal_start
-        replace_end = ideal_end
+        veo_generation_duration = cut_duration
         was_trimmed = False
         trimmed_seconds = 0
     
-    actual_duration = replace_end - replace_start
+    # These are the timestamps that will be used for:
+    # - replace_start/end: What gets CUT from original (the full flagged segment)
+    # - veo_generation_duration: How long the AI replacement clip is
+    replace_start = cut_start
+    replace_end = cut_end  # CUT THE ENTIRE FLAGGED SEGMENT
+    actual_duration = veo_generation_duration  # But replacement is max 8s
     
     print(f"\n🔄 Replacing scene {scene_index + 1}:")
     print(f"   Flagged: {start_time:.1f}s - {end_time:.1f}s ({original_duration:.1f}s)")
+    print(f"   Will CUT: {replace_start:.1f}s - {replace_end:.1f}s ({cut_duration:.1f}s)")
     if was_trimmed:
-        print(f"   ⚠️  Scene too long for Veo ({ideal_duration:.1f}s > {max_veo_duration}s)")
-        print(f"   ✂️  Trimmed {trimmed_seconds:.1f}s to fit within {max_veo_duration}s")
-    print(f"   Will cut: {replace_start:.1f}s - {replace_end:.1f}s ({actual_duration:.1f}s)")
+        print(f"   ⚠️  Scene longer than Veo max ({cut_duration:.1f}s > {max_veo_duration}s)")
+        print(f"   🎬 Generating {actual_duration:.1f}s replacement (video will be {trimmed_seconds:.1f}s shorter)")
+    else:
+        print(f"   🎬 Generating {actual_duration:.1f}s replacement")
     
     # Extract boundary frames at the exact cut points (replace_start and replace_end)
     print("  📸 Extracting clean boundary frames...")

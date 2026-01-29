@@ -361,25 +361,35 @@ def stitch_movie_with_replacements(
                 segment_idx += 1
         
         # Process replacement clip
-        target_duration = rep_end - rep_start
+        cut_duration = rep_end - rep_start
         
-        # Scale replacement to match original video
+        # Scale replacement to match original video dimensions and fps
         scaled_path = str(output_dir / f"segment_{segment_idx:03d}_replacement_scaled.mp4")
-        print(f"  🔄 Processing replacement: {rep_start:.1f}s - {rep_end:.1f}s")
+        print(f"  🔄 Processing replacement: {rep_start:.1f}s - {rep_end:.1f}s (cutting {cut_duration:.1f}s)")
         
         if scale_video_to_match(
             rep_path, scaled_path,
             video_info["width"], video_info["height"], video_info["fps"]
         ):
-            # Adjust duration
-            adjusted_path = str(output_dir / f"segment_{segment_idx:03d}_replacement.mp4")
-            adjust_replacement_duration(scaled_path, adjusted_path, target_duration)
+            # Get the actual replacement duration
+            rep_info = get_video_info(scaled_path)
+            rep_duration = rep_info.get("duration", 0)
+            
+            # DON'T stretch the replacement - use it as-is
+            # If the replacement is shorter than the cut, that's fine
+            # The video will just be shorter overall (which is what we want - remove ALL the bad content)
+            adjusted_path = scaled_path  # Use the scaled clip directly
+            
+            if rep_duration < cut_duration:
+                print(f"     📉 Replacement is {rep_duration:.1f}s (video will be {cut_duration - rep_duration:.1f}s shorter)")
             
             # Optionally extract and overlay original audio
+            # Use the REPLACEMENT duration for audio, not the cut duration
             if keep_original_audio:
                 with_audio_path = str(output_dir / f"segment_{segment_idx:03d}_with_audio.mp4")
+                # Get audio from the START of the replacement window (rep_start) for the replacement's duration
                 if _overlay_original_audio(
-                    adjusted_path, original_video, rep_start, rep_end, with_audio_path
+                    adjusted_path, original_video, rep_start, rep_start + rep_duration, with_audio_path
                 ):
                     segments.append(with_audio_path)
                 else:
