@@ -15,8 +15,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Scene Cleaner | AI-Powered Video Moderation",
-  description: "Clean your videos with AI-powered content moderation. Remove inappropriate scenes seamlessly.",
+  title: "Halal Cuts | AI-Powered Video Moderation",
+  description: "Make your videos halal with AI-powered content moderation. Detect and replace inappropriate scenes seamlessly.",
 };
 
 export default function RootLayout({

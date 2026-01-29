@@ -28,6 +28,13 @@ interface FilterOption {
   available: boolean;
 }
 
+interface Timestamp {
+  start: number;
+  end: number;
+  issue: string;
+  severity: string;
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -37,7 +44,9 @@ export default function Home() {
   const [error, setError] = useState("");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [downloadFilename, setDownloadFilename] = useState("");
+  const [timestamps, setTimestamps] = useState<Timestamp[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   const [filters, setFilters] = useState<FilterOption[]>([
     {
@@ -155,31 +164,53 @@ export default function Home() {
 
       clearInterval(uploadInterval);
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || "Processing failed");
-      }
-
-      // Get the video blob
-      setProgress(80);
-      setStatusMessage("Downloading processed video...");
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
+      // Check if response is JSON or direct file
+      const contentType = response.headers.get("content-type") || "";
       
-      // Get filename from Content-Disposition header or generate one
-      const contentDisposition = response.headers.get("Content-Disposition");
-      let filename = `${file.name.replace(/\.[^/.]+$/, "")}_clean.mp4`;
-      if (contentDisposition) {
-        const match = contentDisposition.match(/filename="?(.+)"?/);
-        if (match) filename = match[1];
-      }
+      if (contentType.includes("application/json")) {
+        // JSON response with video URL and timestamps
+        const data = await response.json();
 
-      setProgress(100);
-      setDownloadUrl(url);
-      setDownloadFilename(filename);
-      setState("complete");
-      setStatusMessage("Video processed successfully!");
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || "Processing failed");
+        }
+
+        // Handle both fal.ai URLs and local API URLs
+        let videoUrl = data.video_url;
+        if (videoUrl.startsWith("/api/")) {
+          videoUrl = `http://localhost:5000${videoUrl}`;
+        }
+        
+        setProgress(100);
+        setDownloadUrl(videoUrl);
+        setDownloadFilename(data.filename || `${file.name.replace(/\.[^/.]+$/, "")}_clean.mp4`);
+        setTimestamps(data.timestamps || []);
+        setState("complete");
+        setStatusMessage(`Video processed successfully! ${data.replacements_successful || 0} scenes replaced.`);
+      } else {
+        // Direct file response (fallback)
+        if (!response.ok) {
+          throw new Error("Processing failed");
+        }
+        
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        
+        // Get filename from Content-Disposition header
+        const contentDisposition = response.headers.get("Content-Disposition");
+        let filename = `${file.name.replace(/\.[^/.]+$/, "")}_clean.mp4`;
+        if (contentDisposition) {
+          const match = contentDisposition.match(/filename="?(.+)"?/);
+          if (match) filename = match[1];
+        }
+        
+        setProgress(100);
+        setDownloadUrl(url);
+        setDownloadFilename(filename);
+        setTimestamps([]);
+        setState("complete");
+        setStatusMessage("Video processed successfully!");
+      }
     } catch (err) {
       setState("error");
       setError(err instanceof Error ? err.message : "An error occurred");
@@ -193,21 +224,54 @@ export default function Home() {
     setProgress(0);
     setStatusMessage("");
     setError("");
-    if (downloadUrl) {
+    // Revoke blob URL if it's a blob
+    if (downloadUrl && downloadUrl.startsWith("blob:")) {
       URL.revokeObjectURL(downloadUrl);
     }
     setDownloadUrl(null);
     setDownloadFilename("");
+    setTimestamps([]);
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const seekToTimestamp = (seconds: number) => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = seconds;
+      videoRef.current.play();
+    }
+  };
+
+  const getSeverityColor = (severity: string) => {
+    switch (severity.toLowerCase()) {
+      case "heavy":
+      case "severe":
+        return "bg-red-500/20 text-red-400 border-red-500/30";
+      case "moderate":
+        return "bg-orange-500/20 text-orange-400 border-orange-500/30";
+      default:
+        return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
+    }
   };
 
   const downloadVideo = () => {
     if (downloadUrl) {
-      const a = document.createElement("a");
-      a.href = downloadUrl;
-      a.download = downloadFilename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      if (downloadUrl.startsWith("blob:")) {
+        // Blob URL (demo mode) - trigger download
+        const a = document.createElement("a");
+        a.href = downloadUrl;
+        a.download = downloadFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } else {
+        // fal.ai URL - open in new tab
+        window.open(downloadUrl, "_blank");
+      }
     }
   };
 
@@ -220,10 +284,10 @@ export default function Home() {
           <span className="text-sm text-[var(--muted)]">AI-Powered Moderation</span>
         </div>
         <h1 className="text-4xl md:text-6xl font-bold mb-4 tracking-tight">
-          Scene <span className="text-[var(--accent)]">Cleaner</span>
+          Halal <span className="text-[var(--accent)]">Cuts</span>
         </h1>
         <p className="text-[var(--muted)] text-lg max-w-md mx-auto">
-          Upload your video and let AI detect and replace inappropriate scenes seamlessly
+          Make your videos halal — AI detects and replaces inappropriate scenes seamlessly
         </p>
       </div>
 
@@ -391,17 +455,59 @@ export default function Home() {
           )}
 
           {state === "complete" && (
-            <div className="py-8">
-              <div className="flex flex-col items-center gap-6">
-                <div className="w-24 h-24 rounded-full bg-[var(--success)]/10 flex items-center justify-center pulse-glow">
-                  <CheckCircle2 className="w-12 h-12 text-[var(--success)]" />
+            <div className="py-6">
+              <div className="flex flex-col gap-5">
+                <div className="flex items-center gap-3">
+                  <CheckCircle2 className="w-8 h-8 text-[var(--success)]" />
+                  <div>
+                    <p className="font-medium text-lg">{statusMessage}</p>
+                    <p className="text-sm text-[var(--muted)]">
+                      Your clean video is ready
+                    </p>
+                  </div>
                 </div>
-                <div className="text-center">
-                  <p className="font-medium text-lg mb-2">{statusMessage}</p>
-                  <p className="text-sm text-[var(--muted)]">
-                    Your clean video is ready for download
-                  </p>
-                </div>
+                
+                {/* Video Preview */}
+                {downloadUrl && (
+                  <div className="w-full rounded-xl overflow-hidden border border-[var(--card-border)] bg-black">
+                    <video
+                      ref={videoRef}
+                      src={downloadUrl}
+                      controls
+                      className="w-full max-h-[400px] object-contain"
+                      preload="metadata"
+                    />
+                  </div>
+                )}
+                
+                {/* Detected Scenes / Timestamps */}
+                {timestamps.length > 0 && (
+                  <div className="w-full">
+                    <h3 className="text-sm font-medium text-[var(--muted)] mb-2 uppercase tracking-wider">
+                      Scenes Replaced ({timestamps.length})
+                    </h3>
+                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
+                      {timestamps.map((ts, idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => seekToTimestamp(ts.start)}
+                          className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all hover:scale-[1.02] ${getSeverityColor(ts.severity)}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono text-sm">
+                              {formatTime(ts.start)} - {formatTime(ts.end)}
+                            </span>
+                            <span className="text-sm opacity-80">{ts.issue}</span>
+                          </div>
+                          <span className="text-xs uppercase font-medium opacity-60">
+                            {ts.severity}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
                 <div className="flex gap-3 w-full">
                   <button
                     onClick={resetState}
