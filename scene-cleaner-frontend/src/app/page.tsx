@@ -3,18 +3,12 @@
 import { useState, useCallback, useRef } from "react";
 import {
   Upload,
-  Video,
-  Shield,
-  Sparkles,
   Download,
   AlertCircle,
-  CheckCircle2,
-  Loader2,
   X,
   Film,
-  Music,
-  MessageSquareWarning,
-  Eye,
+  ArrowRight,
+  RotateCcw,
 } from "lucide-react";
 
 type ProcessingState = "idle" | "uploading" | "processing" | "complete" | "error";
@@ -23,7 +17,6 @@ interface FilterOption {
   id: string;
   label: string;
   description: string;
-  icon: React.ReactNode;
   enabled: boolean;
   available: boolean;
 }
@@ -51,9 +44,8 @@ export default function Home() {
   const [filters, setFilters] = useState<FilterOption[]>([
     {
       id: "filter_sexual_nudity",
-      label: "Visual Content",
-      description: "Detect and replace inappropriate visual scenes",
-      icon: <Eye className="w-5 h-5" />,
+      label: "Visual content",
+      description: "Detect and replace explicit scenes",
       enabled: true,
       available: true,
     },
@@ -61,7 +53,6 @@ export default function Home() {
       id: "filter_profanity",
       label: "Profanity",
       description: "Mute or bleep explicit language",
-      icon: <MessageSquareWarning className="w-5 h-5" />,
       enabled: false,
       available: false,
     },
@@ -69,7 +60,6 @@ export default function Home() {
       id: "filter_music",
       label: "Music",
       description: "Remove or replace background music",
-      icon: <Music className="w-5 h-5" />,
       enabled: false,
       available: false,
     },
@@ -125,25 +115,24 @@ export default function Home() {
 
     const enabledFilters = filters.filter((f) => f.enabled);
     if (enabledFilters.length === 0) {
-      setError("Please enable at least one filter");
+      setError("Enable at least one filter");
       return;
     }
 
     setState("uploading");
     setProgress(0);
-    setStatusMessage("Uploading video...");
+    setStatusMessage("Uploading");
     setError("");
     setDownloadUrl(null);
 
     const formData = new FormData();
     formData.append("video", file);
-    
+
     filters.forEach((f) => {
       formData.append(f.id, f.enabled.toString());
     });
 
     try {
-      // Simulate upload progress
       const uploadInterval = setInterval(() => {
         setProgress((prev) => {
           if (prev >= 30) {
@@ -155,7 +144,7 @@ export default function Home() {
       }, 200);
 
       setState("processing");
-      setStatusMessage("Analyzing video content...");
+      setStatusMessage("Analyzing video");
 
       const response = await fetch("http://localhost:5000/api/process", {
         method: "POST",
@@ -164,52 +153,49 @@ export default function Home() {
 
       clearInterval(uploadInterval);
 
-      // Check if response is JSON or direct file
       const contentType = response.headers.get("content-type") || "";
-      
+
       if (contentType.includes("application/json")) {
-        // JSON response with video URL and timestamps
         const data = await response.json();
 
         if (!response.ok || !data.success) {
           throw new Error(data.error || "Processing failed");
         }
 
-        // Handle both fal.ai URLs and local API URLs
         let videoUrl = data.video_url;
         if (videoUrl.startsWith("/api/")) {
           videoUrl = `http://localhost:5000${videoUrl}`;
         }
-        
+
         setProgress(100);
         setDownloadUrl(videoUrl);
         setDownloadFilename(data.filename || `${file.name.replace(/\.[^/.]+$/, "")}_clean.mp4`);
         setTimestamps(data.timestamps || []);
         setState("complete");
-        setStatusMessage(`Video processed successfully! ${data.replacements_successful || 0} scenes replaced.`);
+        setStatusMessage(
+          `${data.replacements_successful || 0} scene${(data.replacements_successful || 0) === 1 ? "" : "s"} replaced`
+        );
       } else {
-        // Direct file response (fallback)
         if (!response.ok) {
           throw new Error("Processing failed");
         }
-        
+
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
-        
-        // Get filename from Content-Disposition header
+
         const contentDisposition = response.headers.get("Content-Disposition");
         let filename = `${file.name.replace(/\.[^/.]+$/, "")}_clean.mp4`;
         if (contentDisposition) {
           const match = contentDisposition.match(/filename="?(.+)"?/);
           if (match) filename = match[1];
         }
-        
+
         setProgress(100);
         setDownloadUrl(url);
         setDownloadFilename(filename);
         setTimestamps([]);
         setState("complete");
-        setStatusMessage("Video processed successfully!");
+        setStatusMessage("Done");
       }
     } catch (err) {
       setState("error");
@@ -224,7 +210,6 @@ export default function Home() {
     setProgress(0);
     setStatusMessage("");
     setError("");
-    // Revoke blob URL if it's a blob
     if (downloadUrl && downloadUrl.startsWith("blob:")) {
       URL.revokeObjectURL(downloadUrl);
     }
@@ -236,7 +221,7 @@ export default function Home() {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
   const seekToTimestamp = (seconds: number) => {
@@ -246,311 +231,337 @@ export default function Home() {
     }
   };
 
-  const getSeverityColor = (severity: string) => {
+  const getSeverityDot = (severity: string) => {
     switch (severity.toLowerCase()) {
       case "heavy":
       case "severe":
-        return "bg-red-500/20 text-red-400 border-red-500/30";
+        return "#c47a6a";
       case "moderate":
-        return "bg-orange-500/20 text-orange-400 border-orange-500/30";
+        return "#d4a574";
       default:
-        return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
+        return "#7a7a76";
     }
   };
 
   const downloadVideo = () => {
-    if (downloadUrl) {
-      if (downloadUrl.startsWith("blob:")) {
-        // Blob URL (demo mode) - trigger download
-        const a = document.createElement("a");
-        a.href = downloadUrl;
-        a.download = downloadFilename;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-      } else {
-        // fal.ai URL - open in new tab
-        window.open(downloadUrl, "_blank");
-      }
+    if (!downloadUrl) return;
+    if (downloadUrl.startsWith("blob:")) {
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = downloadFilename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } else {
+      window.open(downloadUrl, "_blank");
     }
   };
 
-  return (
-    <main className="min-h-screen flex flex-col items-center justify-center p-6 md:p-12">
-      {/* Header */}
-      <div className="text-center mb-12">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[var(--card)] border border-[var(--card-border)] mb-6">
-          <Shield className="w-4 h-4 text-[var(--accent)]" />
-          <span className="text-sm text-[var(--muted)]">AI-Powered Moderation</span>
-        </div>
-        <h1 className="text-4xl md:text-6xl font-bold mb-4 tracking-tight">
-          Halal <span className="text-[var(--accent)]">Cuts</span>
-        </h1>
-        <p className="text-[var(--muted)] text-lg max-w-md mx-auto">
-          Make your videos halal — AI detects and replaces inappropriate scenes seamlessly
-        </p>
-      </div>
+  const activeFilterCount = filters.filter((f) => f.enabled).length;
 
-      {/* Main Card */}
-      <div className="w-full max-w-2xl">
-        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-2xl p-8 glow-sm">
-          {state === "idle" && (
-            <>
-              {/* Upload Zone */}
-              <div
-                className={`upload-zone rounded-xl p-8 mb-6 cursor-pointer transition-all ${
-                  dragOver ? "drag-over" : ""
-                }`}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="video/*"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-                <div className="flex flex-col items-center gap-4">
+  return (
+    <main className="min-h-screen flex flex-col">
+      {/* Top bar */}
+      <header className="w-full px-6 md:px-10 py-6 flex items-center justify-between">
+        <div className="flex items-baseline gap-2">
+          <span className="font-serif italic text-2xl tracking-tight">halalcut</span>
+          <span className="text-[11px] text-[var(--muted-2)] font-mono uppercase tracking-widest">
+            v0.1
+          </span>
+        </div>
+        <div className="flex items-center gap-2 text-[11px] font-mono uppercase tracking-widest text-[var(--muted)]">
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              state === "idle" || state === "complete"
+                ? "bg-[var(--success)]"
+                : state === "error"
+                ? "bg-[var(--error)]"
+                : "bg-[var(--accent)]"
+            }`}
+          />
+          {state === "idle" && "ready"}
+          {state === "uploading" && "uploading"}
+          {state === "processing" && "processing"}
+          {state === "complete" && "complete"}
+          {state === "error" && "error"}
+        </div>
+      </header>
+
+      {/* Content */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 md:px-10 pb-16">
+        <div className="w-full max-w-[620px]">
+          {/* Title block */}
+          <div className="mb-14">
+            <h1 className="font-serif text-5xl md:text-6xl leading-[1.05] tracking-tight mb-4">
+              Scene cleaner for <em className="italic">films</em>.
+            </h1>
+            <p className="text-[var(--muted)] text-[15px] leading-relaxed max-w-[440px]">
+              Upload a film. We detect inappropriate scenes and replace them with
+              continuity-matched footage. The rest of the film stays untouched.
+            </p>
+          </div>
+
+          {/* Panel */}
+          <div className="hairline rounded-md bg-[var(--surface)]">
+            {state === "idle" && (
+              <div className="p-6 md:p-8">
+                {/* Upload zone */}
+                <div
+                  className={`upload-zone rounded-sm p-10 cursor-pointer ${
+                    dragOver ? "drag-over" : ""
+                  }`}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => !file && fileInputRef.current?.click()}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="video/*"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
                   {file ? (
-                    <>
-                      <div className="w-16 h-16 rounded-full bg-[var(--accent)]/10 flex items-center justify-center">
-                        <Film className="w-8 h-8 text-[var(--accent)]" />
-                      </div>
-                      <div className="text-center">
-                        <p className="font-medium mb-1">{file.name}</p>
-                        <p className="text-sm text-[var(--muted)]">
-                          {formatFileSize(file.size)}
-                        </p>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <Film className="w-4 h-4 text-[var(--accent)] flex-shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-[14px] truncate">{file.name}</p>
+                          <p className="text-[11px] font-mono uppercase tracking-wider text-[var(--muted)] mt-0.5">
+                            {formatFileSize(file.size)}
+                          </p>
+                        </div>
                       </div>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setFile(null);
                         }}
-                        className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] flex items-center gap-1"
+                        className="text-[var(--muted)] hover:text-[var(--foreground)] flex-shrink-0 ml-4"
+                        aria-label="Remove file"
                       >
-                        <X className="w-4 h-4" /> Remove
+                        <X className="w-4 h-4" />
                       </button>
-                    </>
+                    </div>
                   ) : (
-                    <>
-                      <div className="w-16 h-16 rounded-full bg-[var(--accent)]/10 flex items-center justify-center animate-float">
-                        <Upload className="w-8 h-8 text-[var(--accent)]" />
-                      </div>
-                      <div className="text-center">
-                        <p className="font-medium mb-1">
-                          Drop your video here or click to browse
-                        </p>
-                        <p className="text-sm text-[var(--muted)]">
-                          Supports MP4, MOV, AVI, MKV (up to 2GB)
-                        </p>
-                      </div>
-                    </>
+                    <div className="flex flex-col items-center gap-3 py-2">
+                      <Upload className="w-5 h-5 text-[var(--muted)]" />
+                      <p className="text-[14px] text-[var(--foreground)]">
+                        Drop a video here, or click to select
+                      </p>
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-[var(--muted-2)]">
+                        mp4 · mov · avi · mkv — up to 2gb
+                      </p>
+                    </div>
                   )}
                 </div>
-              </div>
 
-              {/* Filter Options */}
-              <div className="mb-6">
-                <h3 className="text-sm font-medium text-[var(--muted)] mb-3 uppercase tracking-wider">
-                  Content Filters
-                </h3>
-                <div className="space-y-3">
-                  {filters.map((filter) => (
-                    <div
-                      key={filter.id}
-                      className={`flex items-center justify-between p-4 rounded-lg border transition-all ${
-                        filter.available
-                          ? "bg-[var(--background)] border-[var(--card-border)] hover:border-[var(--accent)]/50"
-                          : "bg-[var(--background)]/50 border-[var(--card-border)]/50 opacity-60"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                            filter.enabled && filter.available
-                              ? "bg-[var(--accent)]/20 text-[var(--accent)]"
-                              : "bg-[var(--card-border)]/50 text-[var(--muted)]"
+                {/* Filters */}
+                <div className="mt-8">
+                  <div className="flex items-baseline justify-between mb-3">
+                    <h3 className="text-[11px] font-mono uppercase tracking-widest text-[var(--muted)]">
+                      Filters
+                    </h3>
+                    <span className="text-[11px] font-mono text-[var(--muted-2)]">
+                      {activeFilterCount} active
+                    </span>
+                  </div>
+                  <div>
+                    {filters.map((filter, i) => (
+                      <button
+                        key={filter.id}
+                        onClick={() => toggleFilter(filter.id)}
+                        disabled={!filter.available}
+                        className={`w-full flex items-center gap-4 py-4 text-left ${
+                          i !== 0 ? "border-t border-[var(--border)]" : ""
+                        } ${!filter.available ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
+                      >
+                        <span
+                          className={`check ${
+                            filter.enabled && filter.available ? "on" : ""
                           }`}
-                        >
-                          {filter.icon}
-                        </div>
-                        <div>
-                          <p className="font-medium flex items-center gap-2">
-                            {filter.label}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-[14px]">{filter.label}</span>
                             {!filter.available && (
-                              <span className="text-xs px-2 py-0.5 rounded bg-[var(--card-border)] text-[var(--muted)]">
-                                Coming Soon
+                              <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--muted-2)]">
+                                soon
                               </span>
                             )}
-                          </p>
-                          <p className="text-sm text-[var(--muted)]">
+                          </div>
+                          <p className="text-[12px] text-[var(--muted)] mt-0.5">
                             {filter.description}
                           </p>
                         </div>
-                      </div>
-                      <button
-                        onClick={() => toggleFilter(filter.id)}
-                        disabled={!filter.available}
-                        className={`toggle-switch ${
-                          filter.enabled && filter.available ? "active" : ""
-                        } ${!filter.available ? "cursor-not-allowed" : ""}`}
-                      />
-                    </div>
-                  ))}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {error && (
+                  <div className="mt-6 flex items-center gap-2 text-[13px] text-[var(--error)]">
+                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                    <p>{error}</p>
+                  </div>
+                )}
+
+                {/* Action row */}
+                <div className="mt-8 flex items-center justify-between">
+                  <p className="text-[11px] font-mono uppercase tracking-widest text-[var(--muted-2)]">
+                    {file ? "ready to process" : "awaiting file"}
+                  </p>
+                  <button
+                    onClick={processVideo}
+                    disabled={!file}
+                    className="btn btn-primary"
+                  >
+                    Process
+                    <ArrowRight className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
+            )}
 
-              {/* Error Message */}
-              {error && (
-                <div className="flex items-center gap-2 p-4 rounded-lg bg-[var(--error)]/10 border border-[var(--error)]/20 text-[var(--error)] mb-6">
-                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
-                  <p className="text-sm">{error}</p>
-                </div>
-              )}
-
-              {/* Process Button */}
-              <button
-                onClick={processVideo}
-                disabled={!file}
-                className={`w-full py-4 rounded-xl font-medium text-lg flex items-center justify-center gap-2 transition-all ${
-                  file
-                    ? "bg-[var(--accent)] hover:bg-[var(--accent-hover)] text-white glow"
-                    : "bg-[var(--card-border)] text-[var(--muted)] cursor-not-allowed"
-                }`}
-              >
-                <Sparkles className="w-5 h-5" />
-                Process Video
-              </button>
-            </>
-          )}
-
-          {(state === "uploading" || state === "processing") && (
-            <div className="py-8">
-              <div className="flex flex-col items-center gap-6">
-                <div className="relative">
-                  <div className="w-24 h-24 rounded-full bg-[var(--accent)]/10 flex items-center justify-center">
-                    <Video className="w-12 h-12 text-[var(--accent)]" />
-                  </div>
-                  <div className="absolute inset-0 rounded-full border-4 border-transparent border-t-[var(--accent)] animate-spin-slow" />
-                </div>
-                <div className="text-center">
-                  <p className="font-medium text-lg mb-2">{statusMessage}</p>
-                  <p className="text-sm text-[var(--muted)]">
-                    This may take several minutes depending on video length
+            {(state === "uploading" || state === "processing") && (
+              <div className="p-6 md:p-8">
+                <div className="flex items-baseline justify-between mb-6">
+                  <p className="text-[14px]">
+                    {statusMessage}
+                    <span className="blink ml-0.5">_</span>
                   </p>
+                  <span className="text-[11px] font-mono tabular-nums text-[var(--muted)]">
+                    {progress.toString().padStart(2, "0")}%
+                  </span>
                 </div>
-                <div className="w-full bg-[var(--card-border)] rounded-full h-2 overflow-hidden">
+                <div className="progress-track">
                   <div
-                    className="progress-bar h-full rounded-full"
+                    className="progress-fill"
                     style={{ width: `${progress}%` }}
                   />
                 </div>
-                <p className="text-sm text-[var(--muted)]">{progress}% complete</p>
-              </div>
-            </div>
-          )}
-
-          {state === "complete" && (
-            <div className="py-6">
-              <div className="flex flex-col gap-5">
-                <div className="flex items-center gap-3">
-                  <CheckCircle2 className="w-8 h-8 text-[var(--success)]" />
-                  <div>
-                    <p className="font-medium text-lg">{statusMessage}</p>
-                    <p className="text-sm text-[var(--muted)]">
-                      Your clean video is ready
-                    </p>
+                <p className="mt-6 text-[12px] text-[var(--muted)] leading-relaxed">
+                  Processing runs server-side. This can take several minutes
+                  depending on film length — you can leave this tab open.
+                </p>
+                {file && (
+                  <div className="mt-6 pt-6 border-t border-[var(--border)] flex items-center justify-between">
+                    <span className="text-[11px] font-mono uppercase tracking-wider text-[var(--muted)] truncate">
+                      {file.name}
+                    </span>
+                    <span className="text-[11px] font-mono text-[var(--muted-2)] ml-4 flex-shrink-0">
+                      {formatFileSize(file.size)}
+                    </span>
                   </div>
-                </div>
-                
-                {/* Video Preview */}
+                )}
+              </div>
+            )}
+
+            {state === "complete" && (
+              <div>
+                {/* Video */}
                 {downloadUrl && (
-                  <div className="w-full rounded-xl overflow-hidden border border-[var(--card-border)] bg-black">
+                  <div className="bg-black">
                     <video
                       ref={videoRef}
                       src={downloadUrl}
                       controls
-                      className="w-full max-h-[400px] object-contain"
+                      className="w-full max-h-[440px] object-contain"
                       preload="metadata"
                     />
                   </div>
                 )}
-                
-                {/* Detected Scenes / Timestamps */}
-                {timestamps.length > 0 && (
-                  <div className="w-full">
-                    <h3 className="text-sm font-medium text-[var(--muted)] mb-2 uppercase tracking-wider">
-                      Scenes Replaced ({timestamps.length})
-                    </h3>
-                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                      {timestamps.map((ts, idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => seekToTimestamp(ts.start)}
-                          className={`w-full flex items-center justify-between p-3 rounded-lg border transition-all hover:scale-[1.02] ${getSeverityColor(ts.severity)}`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <span className="font-mono text-sm">
-                              {formatTime(ts.start)} - {formatTime(ts.end)}
-                            </span>
-                            <span className="text-sm opacity-80">{ts.issue}</span>
-                          </div>
-                          <span className="text-xs uppercase font-medium opacity-60">
-                            {ts.severity}
-                          </span>
-                        </button>
-                      ))}
+
+                <div className="p-6 md:p-8">
+                  <div className="flex items-baseline justify-between mb-6">
+                    <div>
+                      <p className="text-[14px]">{statusMessage}</p>
+                      <p className="text-[11px] font-mono uppercase tracking-wider text-[var(--muted-2)] mt-1">
+                        {downloadFilename}
+                      </p>
                     </div>
+                    <span className="text-[11px] font-mono uppercase tracking-widest text-[var(--success)]">
+                      done
+                    </span>
                   </div>
-                )}
-                
-                <div className="flex gap-3 w-full">
-                  <button
-                    onClick={resetState}
-                    className="flex-1 py-3 rounded-xl font-medium border border-[var(--card-border)] hover:bg-[var(--card-border)]/50 transition-all flex items-center justify-center gap-2"
-                  >
-                    Process Another
-                  </button>
-                  <button
-                    onClick={downloadVideo}
-                    className="flex-1 py-3 rounded-xl font-medium bg-[var(--success)] hover:bg-[var(--success)]/80 text-white transition-all flex items-center justify-center gap-2"
-                  >
-                    <Download className="w-5 h-5" />
-                    Download
-                  </button>
+
+                  {timestamps.length > 0 && (
+                    <div className="mb-6">
+                      <div className="flex items-baseline justify-between mb-2">
+                        <h3 className="text-[11px] font-mono uppercase tracking-widest text-[var(--muted)]">
+                          Scenes replaced
+                        </h3>
+                        <span className="text-[11px] font-mono text-[var(--muted-2)]">
+                          {timestamps.length}
+                        </span>
+                      </div>
+                      <div className="hairline rounded-sm max-h-[240px] overflow-y-auto">
+                        {timestamps.map((ts, idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => seekToTimestamp(ts.start)}
+                            className="ts-row"
+                          >
+                            <span
+                              className="sev-dot"
+                              style={{ background: getSeverityDot(ts.severity) }}
+                            />
+                            <span className="min-w-0">
+                              <span className="font-mono text-[12px] text-[var(--foreground)]">
+                                {formatTime(ts.start)} – {formatTime(ts.end)}
+                              </span>
+                              <span className="text-[12px] text-[var(--muted)] ml-3">
+                                {ts.issue}
+                              </span>
+                            </span>
+                            <span className="text-[10px] font-mono uppercase tracking-wider text-[var(--muted-2)]">
+                              {ts.severity}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3">
+                    <button onClick={resetState} className="btn btn-ghost flex-1">
+                      <RotateCcw className="w-4 h-4" />
+                      New video
+                    </button>
+                    <button onClick={downloadVideo} className="btn btn-primary flex-1">
+                      <Download className="w-4 h-4" />
+                      Download
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {state === "error" && (
-            <div className="py-8">
-              <div className="flex flex-col items-center gap-6">
-                <div className="w-24 h-24 rounded-full bg-[var(--error)]/10 flex items-center justify-center">
-                  <AlertCircle className="w-12 h-12 text-[var(--error)]" />
+            {state === "error" && (
+              <div className="p-6 md:p-8">
+                <div className="flex items-baseline justify-between mb-4">
+                  <p className="text-[14px]">Processing failed</p>
+                  <span className="text-[11px] font-mono uppercase tracking-widest text-[var(--error)]">
+                    error
+                  </span>
                 </div>
-                <div className="text-center">
-                  <p className="font-medium text-lg mb-2">Processing Failed</p>
-                  <p className="text-sm text-[var(--error)]">{error}</p>
-                </div>
-                <button
-                  onClick={resetState}
-                  className="w-full py-3 rounded-xl font-medium border border-[var(--card-border)] hover:bg-[var(--card-border)]/50 transition-all"
-                >
-                  Try Again
+                <p className="text-[13px] text-[var(--muted)] leading-relaxed mb-8">
+                  {error}
+                </p>
+                <button onClick={resetState} className="btn btn-ghost w-full">
+                  <RotateCcw className="w-4 h-4" />
+                  Try again
                 </button>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
 
-        {/* Footer Info */}
-        <div className="mt-6 text-center text-sm text-[var(--muted)]">
-          <p>Powered by OpenAI Vision & fal.ai Video Generation</p>
+          {/* Footer line */}
+          <div className="mt-10 flex items-center justify-between text-[11px] font-mono uppercase tracking-widest text-[var(--muted-2)]">
+            <span>frame-accurate · continuity-matched</span>
+            <span>built for film</span>
+          </div>
         </div>
       </div>
     </main>
